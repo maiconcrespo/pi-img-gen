@@ -78,10 +78,11 @@ separate overlay on top of this capability.
 | 1. Transport | `src/generate.ts` | Generic OpenAI-compatible `/images/generations` client, response normalization, magic-byte MIME detection, error mapping. **No provider strings.** |
 | 2. Profiles | `src/profiles.ts` | One row per provider: provider id, images api key, base URL, per-model default sizes, min-pixel rules. |
 
-Reference images (`image` blocks in the input) are **not yet supported**: the
-endpoint shape is unverified, so the transport returns a clear error result
-(`reference images not supported yet by this endpoint build`) instead of guessing.
-A later probe task will resolve the shape and extend the `buildRequestBody` seam.
+Reference images (`image` blocks in the input) are **not supported by the
+opendesign gateway build** (verified 2026-10-07, see below): the transport returns
+a clear error result (`reference images not supported yet by this endpoint build`)
+instead of guessing. The `buildRequestBody` seam stays open for providers whose
+gateways do accept image input.
 
 ## Measured model table (opendesign gateway, 2026-10-07)
 
@@ -92,6 +93,22 @@ A later probe task will resolve the shape and extend the `buildRequestBody` seam
 | `seedream-5.0-pro` | ~47s | 1024x1024 |
 | `gpt-image-2` | ~81s | 1024x1024 |
 | `seedream-5.0` | — | **1920x1920** (rejects <3.7MP with HTTP 400) |
+
+Live verification (2026-10-07, all five models, real gateway): latencies vary
+±50–70% run to run — treat the table as labels, not a contract. The `nano-banana`
+pair **overrides the requested size** (asked 1024x1024, returned 1408x768); the
+other three honor it. Output MIME is detected from magic bytes and never from the
+URL: the gateway returns JPEG for seedream/nano-banana and PNG for gpt-image-2.
+Error mapping verified live: HTTP 400 (size floor) and HTTP 404 (unknown model)
+both surface status + body snippet in `errorMessage`, never a thrown error.
+
+Reference-image probe (2026-10-07): `POST /v1/images/edits` returns 404 (both
+multipart and JSON), and `POST /v1/images/generations` is strict JSON whose extra
+reference fields (`image`, `input_images`, `image_url`, `init_image`, `mask`, …)
+are **silently ignored** — garbage values behave identically to valid ones, and
+every response routes as `.../text-to-image`. The catalog's
+`input_modalities: ["text", "image"]` is not backed by any reachable image-input
+channel.
 
 Sizes come from the profile table; the UI layer can read them from the exported
 `DEFAULT_SIZES` map or `resolveDefaultSize(profile, modelId)`.
