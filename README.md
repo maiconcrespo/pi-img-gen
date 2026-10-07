@@ -7,6 +7,7 @@ providers whose models declare `api: "openai-images"` — previously it failed w
 `getImagesApiProvider("openai-images") is undefined`.
 
 - Provider-neutral core transport + a per-provider **profile table** (v1 ships one verified profile: `opendesign`).
+- A `/imagen` command with two forms: direct generation (`/imagen <prompt> --model <id>`, works headless) and an overlay wizard (bare `/imagen`).
 - Handles both response shapes: `data[0].b64_json` and `data[0].url` (downloads the bytes).
 - Detects the image MIME type by **magic bytes** (JPEG/PNG/GIF/WebP), never from the URL — signed URLs carry no extension, and a real gateway response served a JPEG behind a `.img` URL.
 - Maps HTTP errors and aborts to `stopReason: "error"` / `"aborted"` with an `errorMessage`. It never throws (mirrors pi-ai's `openrouter-images.js`).
@@ -51,10 +52,99 @@ gentle-shell remove npm:pi-imagen
 > (e.g. `~/.gentle-shell/agent/settings.json`). The `/imagen` workflow depends on that
 > exact configuration.
 
+## Usage
+
+### `/imagen` — two forms
+
+```text
+/imagen a red fox in the snow --model nano-banana-2   # direct generation, no overlay
+/imagen                                                # opens the overlay wizard (TUI only)
+```
+
+**Direct form** — `/imagen <prompt text> [--model <id>]` generates immediately without
+opening any UI, so it works in every mode including headless RPC/JSON runs, where
+custom terminal components do not exist. `--model` may appear before or after the
+prompt, `--model=<id>` is accepted, quotes group words, and an unknown or valueless
+`--model` is reported as a usage error before any request goes out.
+
+**Overlay form** — a bare `/imagen` opens a floating wizard (TUI only):
+
+- persistent header: active model, its measured latency note, the size it will send,
+  and the model's size quirk (e.g. `seedream-5.0` rejects sizes below 1920x1920);
+- model picker over the **image-type models from the model registry** (today: the five
+  opendesign models — `nano-banana-2-lite`, `nano-banana-2`, `seedream-5.0-pro`,
+  `gpt-image-2`, `seedream-5.0`) with `↑`/`↓` navigation;
+- prompt textarea with an IME-correct hardware cursor (`Focusable` + `CURSOR_MARKER`);
+- keys: `Tab`/`Shift+Tab` switch panes · `↑`/`↓` navigate · `Enter` generate ·
+  `Esc` cancel (while generating, `Esc` aborts the request) · `Shift+Enter` inserts a
+  newline;
+- live progress: the overlay shows an elapsed-seconds line (typical latencies run
+  6s–80s+, varying ±50–70% run to run) and mirrors it into the status bar, so a slow
+  request never looks hung;
+- `stopReason: "error"` / `"aborted"` messages are displayed in the overlay instead
+  of being swallowed, and failures are also reported as error notifications.
+
+The style-preset ("skill") picker is phase **T5**: the header already renders a preset
+line when a preset list is supplied, but no preset logic ships yet (`preset: null` in
+`meta.json`). Reference images are **out of scope** — see below.
+
+The last model generated with is persisted as the default for the next run:
+
+```text
+<agent-dir>/imagen-state.json        # { "version": 1, "lastModel": "nano-banana-2" }
+```
+
+`<agent-dir>` is pi's agent directory — `~/.pi/agent`, or `~/.gentle-shell/agent` when
+running under gentle-shell — resolved through the host's `getAgentDir()` and
+overridable with `PI_CODING_AGENT_DIR`. The file is plain JSON and safe to delete.
+
+### Output layout
+
+Every successful generation writes:
+
+```text
+~/imagenes/<YYYYMMDD-HHmm>-<slug>/
+├── <model>.<jpg|png|gif|webp>   # extension comes from the block's mimeType ONLY
+└── meta.json                    # reproducibility record
+```
+
+- `<YYYYMMDD-HHmm>` is the local save time; `<slug>` is the slugified prompt (lowercase
+  ASCII, hyphen-separated, ≤48 chars; `image` when the prompt contains no ASCII
+  alphanumerics, e.g. pure CJK/emoji).
+- The extension is derived from the response block's `mimeType` (`image/jpeg`→`.jpg`,
+  `image/png`→`.png`, `image/gif`→`.gif`, `image/webp`→`.webp`) — **never** from a URL
+  or an id. Unknown types become `.bin`.
+- If the directory already exists (same prompt within the same minute), `-2`, `-3`, …
+  is appended; nothing is ever overwritten.
+- `meta.json`:
+
+  ```json
+  {
+    "model": "nano-banana-2",
+    "provider": "opendesign",
+    "prompt": "a red fox in the snow",
+    "preset": null,
+    "sizeSent": "1024x1024",
+    "mimeType": "image/jpeg",
+    "savedAt": "2026-10-07T08:05:00.000Z",
+    "latencyMs": 15240,
+    "stopReason": "stop"
+  }
+  ```
+
+### Reference images: out of scope (v1)
+
+There is **no reference/paste/attachment UI**. The opendesign gateway cannot consume
+reference images (T3 live probe: `POST /v1/images/edits` returns 404 for both multipart
+and JSON, and every reference field on `/v1/images/generations` is silently ignored —
+garbage behaves exactly like valid input, and all responses route as text-to-image), so
+building that input would only offer a control that cannot work. The transport keeps
+its `buildRequestBody` seam open for a gateway that does accept `image` blocks.
+
 ## What it does (and does not do)
 
-This is the **capability layer** only. It registers an `images` implementation per
-profile — no commands, no UI, no model list changes:
+This is the **capability layer**: it registers an `images` implementation per
+profile — no model-list changes, no `baseUrl` rewrites:
 
 ```ts
 pi.registerProvider("opendesign", {
@@ -67,9 +157,10 @@ The registration deliberately passes **no `models`, no `baseUrl`, no
 existing registration of the same provider; supplying `models` would *replace* the
 model list of the bridge registration and break chat.
 
-The **UX layer** — a `/imagen` overlay (model picker, style-preset picker, prompt
-input, reference image, output directory with `meta.json`) — comes later as a
-separate overlay on top of this capability.
+On top of it sits the **UX layer** — the `/imagen` command (`src/command.ts`) and its
+overlay wizard (`src/overlay.ts`, opened with `ctx.ui.custom()`), documented under
+[Usage](#usage--imagen--two-forms). The two layers are independent: the capability
+works from any code path that calls `models.generateImages()`, with or without the UI.
 
 ## Design: two layers, provider-neutral core
 
@@ -145,5 +236,13 @@ npm test    # node --test test/*.test.ts  (Node >= 24, runs TypeScript natively)
 The tests mock fetch through `options.fetch` and cover: `b64_json` success, `url`
 success with magic-byte MIME (JPEG behind a `.img` URL), HTTP 400 mapping (the
 seedream 3.7MP rejection text surfaces in `errorMessage`), abort mapping,
-reference-image rejection, per-model size defaults, auth headers, and the
-registration shape (images-only, no `models`/`baseUrl`/`refreshModels`).
+reference-image rejection, per-model size defaults, auth headers, the
+registration shape (images-only, no `models`/`baseUrl`/`refreshModels`), plus the
+UX layer's pure logic: `/imagen` argument parsing, prompt slugging and output
+naming (including unicode/punctuation prompts), mimeType→extension mapping, the
+`meta.json` shape and the save routine (through an injected filesystem), prompt
+text wrapping/cursor placement, model-picker presentation data and model
+resolution, the persisted-default state file, and headless command dispatch
+(the CLI form never opens the overlay, and every stopReason surfaces visibly).
+The overlay rendering itself is exercised interactively (`pi -e ./pi-imagen`),
+not by the unit suite.
