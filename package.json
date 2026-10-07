@@ -1,0 +1,30 @@
+{
+  "name": "pi-imagen",
+  "version": "0.1.0",
+  "description": "Image-generation capability for pi and gentle-shell: a provider-neutral OpenAI-compatible /images/generations transport with a per-provider profile table.",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "image-generation",
+    "openai-images"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ]
+}
