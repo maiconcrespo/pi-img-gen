@@ -18,7 +18,7 @@ import type {
   ImagesOptions,
   Usage,
 } from "@earendil-works/pi-ai";
-import { DEFAULT_SIZE, type ImageProviderProfile, getProfile, resolveDefaultSize } from "./profiles.ts";
+import { DEFAULT_SIZE, type ImageProviderProfile, getProfile, resolveDefaultSize, validateSize } from "./profiles.ts";
 
 const GENERATIONS_PATH = "/images/generations";
 const ERROR_SNIPPET_CHARS = 400;
@@ -253,10 +253,25 @@ export async function generateImages(
     }
 
     const size = profile ? resolveDefaultSize(profile, model.id) : DEFAULT_SIZE;
-    let payload: unknown = buildRequestBody(model, prompt, size);
+    // Pre-flight size validation at the resolution site: fail with the actionable
+    // reason before building a payload or touching the network.
+    const resolvedSize = validateSize(model.id, profile, size);
+    if (!resolvedSize.ok) {
+      return fail(output, "error", resolvedSize.reason);
+    }
+    let payload: unknown = buildRequestBody(model, prompt, resolvedSize.size);
     if (options?.onPayload) {
       const replacement = await options.onPayload(payload, model);
       if (replacement !== undefined) payload = replacement;
+    }
+    // The onPayload seam can rewrite the size; validate the effective request
+    // too — an invalid size must never reach the provider.
+    const effectiveSize = (payload as { size?: unknown } | null | undefined)?.size;
+    if (typeof effectiveSize === "string") {
+      const checked = validateSize(model.id, profile, effectiveSize);
+      if (!checked.ok) {
+        return fail(output, "error", checked.reason);
+      }
     }
 
     const doFetch = options?.fetch ?? globalThis.fetch;

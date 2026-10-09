@@ -182,6 +182,42 @@ test("onPayload replacement is what gets sent", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Pre-flight size validation — fails locally, before any HTTP call
+// ---------------------------------------------------------------------------
+
+test("below-minimum size for seedream-5.0 fails validation locally with an actionable message and no HTTP call", async () => {
+  const { calls, fetchImpl } = recordFetch(() => jsonResponse({ data: [{ b64_json: PNG_B64 }] }));
+  const result = await generateImages(imageModel(), textContext("a red fox"), {
+    apiKey: "k",
+    fetch: fetchImpl,
+    onPayload: (payload) => ({ ...(payload as Record<string, unknown>), size: "1024x1024" }),
+  });
+
+  assert.equal(result.stopReason, "error");
+  assert.deepEqual(result.output, []);
+  assert.match(result.errorMessage ?? "", /seedream-5\.0/);
+  assert.match(result.errorMessage ?? "", /1024x1024/);
+  assert.match(result.errorMessage ?? "", /3686400/);
+  assert.match(result.errorMessage ?? "", /1920x1920/);
+  assert.equal(calls.length, 0);
+});
+
+test("malformed size reaching the request fails validation locally with no HTTP call", async () => {
+  const { calls, fetchImpl } = recordFetch(() => jsonResponse({ data: [{ b64_json: PNG_B64 }] }));
+  const result = await generateImages(imageModel(), textContext("a red fox"), {
+    apiKey: "k",
+    fetch: fetchImpl,
+    onPayload: (payload) => ({ ...(payload as Record<string, unknown>), size: "banana" }),
+  });
+
+  assert.equal(result.stopReason, "error");
+  assert.deepEqual(result.output, []);
+  assert.match(result.errorMessage ?? "", /"banana"/);
+  assert.match(result.errorMessage ?? "", /WIDTHxHEIGHT/);
+  assert.equal(calls.length, 0);
+});
+
+// ---------------------------------------------------------------------------
 // Endpoint resolution and auth
 // ---------------------------------------------------------------------------
 
