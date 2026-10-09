@@ -1,4 +1,4 @@
-# pi-imagen
+# pi-img-gen
 
 Image-generation capability for **pi** and **gentle-shell**. The package registers a
 provider-neutral `images` implementation that speaks the OpenAI-compatible
@@ -17,15 +17,14 @@ providers whose models declare `api: "openai-images"` — previously it failed w
 ### pi
 
 ```bash
-pi install npm:pi-imagen          # once published to npm
-pi install git:github.com/<org>/<repo>   # or straight from git
+pi install git:github.com/maiconcrespo/pi-img-gen   # straight from git
 pi list                            # verify it is configured
 ```
 
 Try it for one invocation without installing:
 
 ```bash
-pi -e ./pi-imagen
+pi -e ./pi-img-gen
 ```
 
 ### gentle-shell
@@ -34,9 +33,9 @@ pi -e ./pi-imagen
 (`~/.gentle-shell/agent`):
 
 ```bash
-gentle-shell install npm:pi-imagen
+gentle-shell install git:github.com/maiconcrespo/pi-img-gen
 gentle-shell list
-gentle-shell remove npm:pi-imagen
+gentle-shell remove git:github.com/maiconcrespo/pi-img-gen
 ```
 
 ### Requirements
@@ -244,5 +243,5 @@ naming (including unicode/punctuation prompts), mimeType→extension mapping, th
 text wrapping/cursor placement, model-picker presentation data and model
 resolution, the persisted-default state file, and headless command dispatch
 (the CLI form never opens the overlay, and every stopReason surfaces visibly).
-The overlay rendering itself is exercised interactively (`pi -e ./pi-imagen`),
+The overlay rendering itself is exercised interactively (`pi -e ./pi-img-gen`),
 not by the unit suite.

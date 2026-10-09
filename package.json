@@ -1,6 +1,11 @@
 {
-  "name": "pi-imagen",
+  "name": "pi-img-gen",
   "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maiconcrespo/pi-img-gen.git"
+  },
   "description": "Image-generation capability for pi and gentle-shell: a provider-neutral OpenAI-compatible /images/generations transport with a per-provider profile table.",
   "type": "module",
   "keywords": [

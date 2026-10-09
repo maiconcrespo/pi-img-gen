@@ -1,5 +1,5 @@
 /**
- * Provider profile table for the pi-imagen image-generation capability.
+ * Provider profile table for the pi-img-gen image-generation capability.
  *
  * Layer 2 of the two-layer design: the transport (generate.ts) is a generic
  * OpenAI-compatible `POST {baseUrl}/images/generations` client with no

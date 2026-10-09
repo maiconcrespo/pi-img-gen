@@ -1,5 +1,5 @@
 /**
- * pi-imagen — image-generation capability + `/imagen` UX for pi and gentle-shell.
+ * pi-img-gen — image-generation capability + `/imagen` UX for pi and gentle-shell.
  *
  * Two layers (README "Design: two layers"):
  * 1. Capability — registers ONLY the `images` implementation for each verified
