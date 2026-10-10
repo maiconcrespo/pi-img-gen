@@ -53,3 +53,11 @@ PREFER:
 3. Provider logic lives only in the profile table.
 4. Imports are direct `.ts` ESM specifiers.
 5. Behavior changes carry tests, green under `node --test`.
+
+## Blocking scope (what justifies REJECT)
+
+REJECT only when an explicit REJECT rule above is violated (secrets first).
+Style preferences, test-robustness opinions, naming tastes, path-construction
+preferences, or refactoring suggestions that no rule above names are
+NON-BLOCKING: report them only as non-blocking notes, never as REJECT.
+When uncertain whether a rule is violated, it is not violated.
