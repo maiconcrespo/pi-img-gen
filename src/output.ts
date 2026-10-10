@@ -10,11 +10,16 @@
  *   behind a `.img` URL).
  * - The directory is never reused: a numeric suffix is appended instead.
  *
+ * With an explicit `outDir` (`--out-dir`) the stamp-slug directory is skipped:
+ * the image and its `meta.json` land directly in that directory (resolved to
+ * an absolute path, created recursively when missing). Existing files are
+ * never reused there either — a numeric suffix is appended instead.
+ *
  * Filesystem effects go through the injectable {@link SaveIo} so the naming,
  * meta.json shape, and write order are unit-testable without touching disk.
  */
 import { access, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 /** Maximum slug length; keeps directory names readable in terminals. */
 export const MAX_SLUG_LENGTH = 48;
@@ -152,6 +157,12 @@ const defaultIo: SaveIo = {
 
 export interface SaveGenerationInput {
   root: string;
+  /**
+   * Explicit `--out-dir` destination. When set, the image and meta.json are
+   * saved directly into this directory (resolved to absolute, created
+   * recursively when missing) and `root` is ignored.
+   */
+  outDir?: string;
   model: string;
   provider: string;
   prompt: string;
@@ -171,9 +182,77 @@ export interface SavedImage {
   metaPath: string;
 }
 
+/** One-line error text for filesystem failures. */
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** The `meta.json` document for one save (shared by both layouts). */
+function metaForSave(input: SaveGenerationInput, now: Date): ImagenMeta {
+  return buildMeta({
+    model: input.model,
+    provider: input.provider,
+    prompt: input.prompt,
+    sizeSent: input.sizeSent,
+    mimeType: input.mimeType,
+    latencyMs: input.latencyMs,
+    stopReason: input.stopReason ?? "stop",
+    preset: input.preset ?? null,
+    savedAt: now,
+  });
+}
+
+/**
+ * Save into an explicit `outDir` (`--out-dir`): image + meta.json land in the
+ * directory itself. Unusable destinations surface as errors with an actionable
+ * message naming the path — the command reports them through its existing
+ * error-notification path.
+ */
+async function saveIntoOutDir(input: SaveGenerationInput, io: SaveIo, now: Date): Promise<SavedImage> {
+  const dir = resolve(input.outDir!);
+  try {
+    await io.mkdir(dir, { recursive: true });
+  } catch (error) {
+    if (await io.exists(dir)) {
+      throw new Error(
+        `Cannot save images to --out-dir ${dir}: the path exists but is not a directory. ` +
+          `Remove it or pick another directory with --out-dir <path>.`,
+      );
+    }
+    throw new Error(
+      `Cannot create --out-dir ${dir}: ${messageOf(error)}. ` +
+        `Check the path and its permissions, or pick another directory with --out-dir <path>.`,
+    );
+  }
+
+  const ext = extensionForMime(input.mimeType);
+  const base = safeModelFileName(input.model);
+  let imagePath = join(dir, `${base}${ext}`);
+  let metaPath = join(dir, "meta.json");
+  let suffix = 1;
+  while (((await io.exists(imagePath)) || (await io.exists(metaPath))) && suffix < 1000) {
+    suffix += 1;
+    imagePath = join(dir, `${base}-${suffix}${ext}`);
+    metaPath = join(dir, `meta-${suffix}.json`);
+  }
+
+  const meta = metaForSave(input, now);
+  try {
+    await io.writeFile(imagePath, input.bytes);
+    await io.writeFile(metaPath, `${JSON.stringify(meta, null, 2)}\n`);
+  } catch (error) {
+    throw new Error(
+      `Cannot write to --out-dir ${dir}: ${messageOf(error)}. ` +
+        `Check that the directory is writable, or pick another directory with --out-dir <path>.`,
+    );
+  }
+  return { dir, imagePath, metaPath };
+}
+
 /** Write `<image>.<ext>` + `meta.json` into a fresh output directory. */
 export async function saveGeneration(input: SaveGenerationInput, io: SaveIo = defaultIo): Promise<SavedImage> {
   const now = input.now ?? new Date();
+  if (input.outDir !== undefined) return saveIntoOutDir(input, io, now);
   const stamp = formatStamp(now);
   const slug = slugifyPrompt(input.prompt);
   const ext = extensionForMime(input.mimeType);
@@ -186,17 +265,7 @@ export async function saveGeneration(input: SaveGenerationInput, io: SaveIo = de
     paths = buildOutputPaths({ ...base, slug: `${slug}-${suffix}` });
   }
 
-  const meta = buildMeta({
-    model: input.model,
-    provider: input.provider,
-    prompt: input.prompt,
-    sizeSent: input.sizeSent,
-    mimeType: input.mimeType,
-    latencyMs: input.latencyMs,
-    stopReason: input.stopReason ?? "stop",
-    preset: input.preset ?? null,
-    savedAt: now,
-  });
+  const meta = metaForSave(input, now);
 
   await io.mkdir(paths.dir, { recursive: true });
   await io.writeFile(paths.imagePath, input.bytes);

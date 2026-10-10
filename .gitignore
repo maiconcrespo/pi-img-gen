@@ -1,0 +1,16 @@
+# Dependencies and build output
+node_modules/
+dist/
+
+# Secrets — never commit (AGENTS.md rule #1)
+.env
+.env.*
+!.env.example
+
+# Logs and OS noise
+*.log
+.DS_Store
+
+# Editor state
+.vscode/
+.idea/

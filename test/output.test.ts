@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import {
   buildMeta,
@@ -166,16 +166,29 @@ interface FakeIo {
   mkdirs: string[];
   writes: { path: string; data: string | Uint8Array }[];
   existing: string[];
+  /** mkdir calls for these paths reject with the given error (e.g. ENOTDIR). */
+  failMkdirPaths: Map<string, Error>;
+  /** When set, every writeFile call rejects with this error (e.g. EACCES). */
+  failWriteError?: Error;
 }
 
 function fakeIo(existing: string[] = []): FakeIo {
-  const rec: FakeIo = { io: undefined as unknown as SaveIo, mkdirs: [], writes: [], existing };
+  const rec: FakeIo = {
+    io: undefined as unknown as SaveIo,
+    mkdirs: [],
+    writes: [],
+    existing,
+    failMkdirPaths: new Map(),
+  };
   rec.io = {
     mkdir: async (path: string) => {
+      const failure = rec.failMkdirPaths.get(path);
+      if (failure) throw failure;
       rec.mkdirs.push(path);
       return undefined;
     },
     writeFile: async (path: string, data: string | Uint8Array) => {
+      if (rec.failWriteError) throw rec.failWriteError;
       rec.writes.push({ path, data });
     },
     exists: async (path: string) => rec.existing.includes(path),
@@ -247,4 +260,100 @@ test("saveGeneration never overwrites an existing output directory", async () =>
   );
   assert.equal(saved.dir, join("/home/u/imagenes", "20261007-0805-a-red-fox-2"));
   assert.equal(saved.imagePath, join(saved.dir, "nano-banana-2.jpg"));
+});
+
+// ---------------------------------------------------------------------------
+// outDir override (--out-dir)
+// ---------------------------------------------------------------------------
+
+const OUT_DIR_INPUT = {
+  model: "nano-banana-2",
+  provider: "opendesign",
+  prompt: "a red fox",
+  mimeType: "image/png",
+  bytes: PNG_BYTES,
+  sizeSent: "1024x1024",
+  latencyMs: 15240,
+  now: NOW,
+};
+
+test("outDir saves the image and meta.json directly into the given directory", async () => {
+  const rec = fakeIo();
+  const saved = await saveGeneration(
+    { ...OUT_DIR_INPUT, root: "/home/u/imagenes", outDir: "/home/u/shots" },
+    rec.io,
+  );
+  assert.equal(saved.dir, "/home/u/shots");
+  assert.equal(saved.imagePath, join("/home/u/shots", "nano-banana-2.png"));
+  assert.equal(saved.metaPath, join("/home/u/shots", "meta.json"));
+
+  const imageWrite = rec.writes.find((w) => w.path === saved.imagePath);
+  assert.ok(imageWrite, "image bytes must land in the given directory");
+  assert.deepEqual(imageWrite.data, PNG_BYTES);
+  const metaWrite = rec.writes.find((w) => w.path === saved.metaPath);
+  assert.ok(metaWrite, "meta.json must land in the given directory");
+});
+
+test("outDir is resolved to an absolute path and created recursively when missing", async () => {
+  const rec = fakeIo();
+  const saved = await saveGeneration(
+    { ...OUT_DIR_INPUT, root: "unused-root", outDir: "shots-2026" },
+    rec.io,
+  );
+  assert.equal(saved.dir, resolve("shots-2026"));
+  assert.ok(rec.mkdirs.includes(saved.dir), "the out dir must be created when missing");
+});
+
+test("outDir pointing at an existing file fails through the error path, not a crash", async () => {
+  const rec = fakeIo(["/home/u/shots"]);
+  rec.failMkdirPaths.set("/home/u/shots", new Error("EEXIST: file already exists, mkdir '/home/u/shots'"));
+  await assert.rejects(
+    saveGeneration({ ...OUT_DIR_INPUT, root: "/home/u/imagenes", outDir: "/home/u/shots" }, rec.io),
+    (error: Error) => {
+      assert.match(error.message, /\/home\/u\/shots/, "the message must name the path");
+      assert.match(error.message, /not a directory/i, "the message must say why");
+      return true;
+    },
+  );
+  assert.equal(rec.writes.length, 0, "nothing may be written when the out dir is unusable");
+});
+
+test("an unwritable outDir fails through the error path with an actionable message", async () => {
+  const rec = fakeIo();
+  rec.failWriteError = new Error("EACCES: permission denied, open '/home/u/shots/nano-banana-2.png'");
+  await assert.rejects(
+    saveGeneration({ ...OUT_DIR_INPUT, root: "/home/u/imagenes", outDir: "/home/u/shots" }, rec.io),
+    (error: Error) => {
+      assert.match(error.message, /\/home\/u\/shots/, "the message must name the path");
+      assert.match(error.message, /writable/i, "the message must point at the cause");
+      return true;
+    },
+  );
+});
+
+test("outDir never overwrites an existing image or meta file", async () => {
+  const first = fakeIo();
+  await saveGeneration({ ...OUT_DIR_INPUT, root: "unused-root", outDir: "/home/u/shots" }, first.io);
+
+  const second = fakeIo(first.writes.map((w) => w.path));
+  const saved = await saveGeneration(
+    { ...OUT_DIR_INPUT, root: "unused-root", outDir: "/home/u/shots" },
+    second.io,
+  );
+  assert.equal(saved.imagePath, join("/home/u/shots", "nano-banana-2-2.png"));
+  assert.equal(saved.metaPath, join("/home/u/shots", "meta-2.json"));
+});
+
+test("without outDir the legacy layout is byte-for-byte unchanged", async () => {
+  const rec = fakeIo();
+  const saved = await saveGeneration(
+    { ...OUT_DIR_INPUT, root: "/home/u/imagenes", outDir: undefined },
+    rec.io,
+  );
+  const dir = join("/home/u/imagenes", "20261007-0805-a-red-fox");
+  assert.equal(saved.dir, dir);
+  assert.equal(saved.imagePath, join(dir, "nano-banana-2.png"));
+  assert.equal(saved.metaPath, join(dir, "meta.json"));
+  assert.deepEqual(rec.mkdirs, [dir], "only the generation directory is created");
+  assert.equal(rec.writes.length, 2);
 });

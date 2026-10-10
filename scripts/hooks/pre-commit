@@ -1,0 +1,18 @@
+#!/bin/sh
+# pre-commit guard: deterministic secret scanning before every commit.
+# Decision log: an AI reviewer (GGA) was tried here and removed — a small
+# local model produced inconsistent blocking findings. gitleaks remains the
+# deterministic barrier against committing credentials.
+
+if command -v gitleaks >/dev/null 2>&1; then
+  echo "[pre-commit] gitleaks: scanning staged changes (--redact)..."
+  if ! gitleaks protect --staged --redact; then
+    echo "[pre-commit] BLOCKED: gitleaks found leaked secrets. Remove them before committing." >&2
+    exit 1
+  fi
+  echo "[pre-commit] gitleaks: clean."
+else
+  echo "[pre-commit] WARNING: gitleaks not found; secret scan skipped (brew install gitleaks)." >&2
+fi
+
+exit 0

@@ -3,10 +3,11 @@
  *
  * Two forms, one handler (README "Usage"):
  *
- *   /imagen <prompt text> [--model <id>] → direct generation, NO overlay.
+ *   /imagen <prompt text> [--model <id>] [--out-dir <path>] → direct generation, NO overlay.
  *     Works in every mode: RPC/JSON/print have no custom UI (extensions.md
  *     "UI and modes"), so the CLI form must never touch ctx.ui.custom().
- *   /imagen [flags] → opens the overlay wizard (TUI mode only).
+ *   /imagen [flags] → opens the overlay wizard (TUI mode only); --out-dir
+ *     applies to wizard-initiated generations too.
  *
  * Generation dogfoods the capability this package registers:
  * `ctx.modelRegistry.generateImages(model, { input: [{ type:"text", text }] })`,
@@ -18,9 +19,10 @@ import type { ImageApi, ImageModel, ImagesOutputContent } from "@earendil-works/
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { runDoctor, type DoctorFinding } from "./doctor.ts";
 import { parseImagenArgs } from "./imagen-args.ts";
 import { presentModels, resolveModelId, MODEL_NOTES } from "./present.ts";
-import { saveGeneration } from "./output.ts";
+import { saveGeneration, type SaveGenerationInput, type SavedImage } from "./output.ts";
 import { DEFAULT_SIZE, getProfile, resolveDefaultSize } from "./profiles.ts";
 import { STATE_FILE_NAME, readState, writeState } from "./state.ts";
 
@@ -33,6 +35,16 @@ export interface ImagenCommandOptions {
   outputRoot?: string;
   /** State file path, or `null` to disable default-model persistence. */
   statePath?: string | null;
+  /**
+   * Environment check run before anything else; defaults to `runDoctor`
+   * (src/doctor.ts). Injectable so tests stay off the real filesystem.
+   */
+  doctor?: () => Promise<DoctorFinding[]>;
+  /**
+   * Save step; defaults to `saveGeneration` (src/output.ts). Injectable so
+   * tests can observe where images would land without touching disk.
+   */
+  save?: (input: SaveGenerationInput) => Promise<SavedImage>;
 }
 
 /** What a finished generation hands to the save step. */
@@ -152,11 +164,14 @@ async function persistGeneration(
   ctx: ExtensionCommandContext,
   payload: GenerationPayload,
   options: ImagenCommandOptions,
+  outDir?: string,
 ): Promise<void> {
   const root = options.outputRoot ?? join(homedir(), "imagenes");
+  const save = options.save ?? saveGeneration;
   try {
-    const saved = await saveGeneration({
+    const saved = await save({
       root,
+      outDir,
       model: payload.modelId,
       provider: payload.provider,
       prompt: payload.prompt,
@@ -190,6 +205,7 @@ async function runDirectGeneration(
   prompt: string,
   options: ImagenCommandOptions,
   statePath: string | null,
+  outDir?: string,
 ): Promise<void> {
   const latencyNote = MODEL_NOTES[model.id]?.latencyNote;
   ctx.ui.notify(
@@ -218,7 +234,7 @@ async function runDirectGeneration(
     ctx.ui.notify(`Image generation failed: ${outcome.message}`, "error");
     return;
   }
-  await persistGeneration(ctx, outcome.value, options);
+  await persistGeneration(ctx, outcome.value, options, outDir);
   await persistDefaultModel(statePath, model.id);
 }
 
@@ -228,6 +244,22 @@ export async function runImagenCommand(
   ctx: ExtensionCommandContext,
   options: ImagenCommandOptions = {},
 ): Promise<void> {
+  // Fail EARLY on a broken settings.json dependency (src/doctor.ts): surface
+  // the actionable finding(s) through the existing error path and stop — no
+  // generation attempt, no overlay, no cryptic runtime failure later.
+  const doctor = options.doctor ?? runDoctor;
+  let findings: DoctorFinding[];
+  try {
+    findings = await doctor();
+  } catch (error) {
+    ctx.ui.notify(`settings.json doctor failed: ${messageOf(error)}`, "error");
+    return;
+  }
+  if (findings.length > 0) {
+    for (const finding of findings) ctx.ui.notify(finding.message, "error");
+    return;
+  }
+
   let invocation;
   try {
     invocation = parseImagenArgs(rawArgs ?? "");
@@ -239,7 +271,10 @@ export async function runImagenCommand(
   // No prompt → the overlay wizard, which only exists in the TUI. Never reach
   // for custom components in RPC/JSON/print modes (extensions.md, "UI and modes").
   if (invocation.prompt.length === 0 && ctx.mode !== "tui") {
-    ctx.ui.notify('No prompt given and the overlay needs the TUI. Usage: /imagen <prompt> [--model <id>]', "error");
+    ctx.ui.notify(
+      'No prompt given and the overlay needs the TUI. Usage: /imagen <prompt> [--model <id>] [--out-dir <path>]',
+      "error",
+    );
     return;
   }
 
@@ -259,7 +294,7 @@ export async function runImagenCommand(
   const model = models.find((candidate) => candidate.id === resolution.id)!;
 
   if (invocation.prompt.length > 0) {
-    await runDirectGeneration(ctx, model, invocation.prompt, options, statePath);
+    await runDirectGeneration(ctx, model, invocation.prompt, options, statePath, invocation.outDir);
     return;
   }
 
@@ -286,6 +321,6 @@ export async function runImagenCommand(
     if (outcome.lastError) ctx.ui.notify(`Image generation cancelled: ${outcome.lastError}`, "warning");
     return;
   }
-  await persistGeneration(ctx, outcome.value, options);
+  await persistGeneration(ctx, outcome.value, options, invocation.outDir);
   await persistDefaultModel(statePath, outcome.modelId);
 }

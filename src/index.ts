@@ -73,6 +73,14 @@ export {
   slugifyPrompt,
 } from "./output.ts";
 export type { ImagenMeta, OutputPaths, SaveGenerationInput, SaveIo, SavedImage } from "./output.ts";
+export {
+  REQUIRED_EXTENSION_ENTRY,
+  checkSettingsJson,
+  defaultSettingsCandidates,
+  loadSettingsJson,
+  runDoctor,
+} from "./doctor.ts";
+export type { DoctorFinding, DoctorFindingCode, DoctorIo, LoadSettingsOptions, SettingsLoadResult } from "./doctor.ts";
 export { DEFAULT_STATE, STATE_FILE_NAME, parseState, readState, serializeState, writeState } from "./state.ts";
 export type { ImagenState } from "./state.ts";
 export { displayWidth, rowIndexForCursor, wrapRows } from "./textlayout.ts";
