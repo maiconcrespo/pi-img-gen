@@ -50,6 +50,12 @@ gentle-shell remove git:github.com/maiconcrespo/pi-img-gen
 > Do not remove or edit `"extensions": ["-builtin:codemode"]` from `settings.json`
 > (e.g. `~/.gentle-shell/agent/settings.json`). The `/imagen` workflow depends on that
 > exact configuration.
+>
+> The package now verifies this dependency early: a settings.json "doctor" runs
+> before every `/imagen` invocation and stops before any generation if the line is
+> missing or edited. Expect an error notification like `settings.json (…) has an
+> "extensions" array without the exact entry "-builtin:codemode" … Fix: add
+> "extensions": ["-builtin:codemode"] to settings.json.`
 
 ## Usage
 

@@ -18,6 +18,7 @@ import type { ImageApi, ImageModel, ImagesOutputContent } from "@earendil-works/
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { runDoctor, type DoctorFinding } from "./doctor.ts";
 import { parseImagenArgs } from "./imagen-args.ts";
 import { presentModels, resolveModelId, MODEL_NOTES } from "./present.ts";
 import { saveGeneration } from "./output.ts";
@@ -33,6 +34,11 @@ export interface ImagenCommandOptions {
   outputRoot?: string;
   /** State file path, or `null` to disable default-model persistence. */
   statePath?: string | null;
+  /**
+   * Environment check run before anything else; defaults to `runDoctor`
+   * (src/doctor.ts). Injectable so tests stay off the real filesystem.
+   */
+  doctor?: () => Promise<DoctorFinding[]>;
 }
 
 /** What a finished generation hands to the save step. */
@@ -228,6 +234,22 @@ export async function runImagenCommand(
   ctx: ExtensionCommandContext,
   options: ImagenCommandOptions = {},
 ): Promise<void> {
+  // Fail EARLY on a broken settings.json dependency (src/doctor.ts): surface
+  // the actionable finding(s) through the existing error path and stop — no
+  // generation attempt, no overlay, no cryptic runtime failure later.
+  const doctor = options.doctor ?? runDoctor;
+  let findings: DoctorFinding[];
+  try {
+    findings = await doctor();
+  } catch (error) {
+    ctx.ui.notify(`settings.json doctor failed: ${messageOf(error)}`, "error");
+    return;
+  }
+  if (findings.length > 0) {
+    for (const finding of findings) ctx.ui.notify(finding.message, "error");
+    return;
+  }
+
   let invocation;
   try {
     invocation = parseImagenArgs(rawArgs ?? "");
