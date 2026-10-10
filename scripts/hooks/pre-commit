@@ -1,0 +1,35 @@
+#!/bin/sh
+# Composed pre-commit guard for pi-img-gen: gitleaks secret scan + GGA review.
+# Portable POSIX sh. Installed via scripts/install-hooks.sh. Never echoes
+# secret values (gitleaks output is redacted via --redact).
+set -u
+
+status=0
+
+if command -v gitleaks >/dev/null 2>&1; then
+    echo "[pre-commit] gitleaks: scanning staged changes (--redact)..."
+    if gitleaks protect --staged --redact; then
+        echo "[pre-commit] gitleaks: clean."
+    else
+        echo "[pre-commit] BLOCKED: gitleaks found a potential secret in the staged changes." >&2
+        echo "[pre-commit] Remove the secret and re-stage; output above is redacted." >&2
+        exit 1
+    fi
+else
+    echo "[pre-commit] WARNING: gitleaks not found; skipping secret scan." >&2
+    echo "[pre-commit]   Install it with: brew install gitleaks" >&2
+fi
+
+if command -v gga >/dev/null 2>&1; then
+    echo "[pre-commit] gga: running code review..."
+    gga run
+    status=$?
+    if [ "$status" -ne 0 ]; then
+        echo "[pre-commit] BLOCKED: gga review failed (exit $status)." >&2
+    fi
+else
+    echo "[pre-commit] WARNING: gga not found; skipping AI review." >&2
+    echo "[pre-commit]   Install it with: brew install gentleman-programming/tap/gga" >&2
+fi
+
+exit "$status"
