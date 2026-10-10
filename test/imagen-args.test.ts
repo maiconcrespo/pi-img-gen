@@ -77,3 +77,60 @@ test("empty input yields an empty prompt and no model", () => {
 test("a quoted empty prompt stays empty", () => {
   assert.equal(parseImagenArgs('"" --model nano-banana-2').prompt, "");
 });
+
+// ---------------------------------------------------------------------------
+// --out-dir
+// ---------------------------------------------------------------------------
+
+test("--out-dir after the prompt binds the directory and keeps the prompt", () => {
+  const parsed = parseImagenArgs("a red fox --out-dir /tmp/shots");
+  assert.equal(parsed.prompt, "a red fox");
+  assert.equal(parsed.outDir, "/tmp/shots");
+});
+
+test("--out-dir=<path> equals form is accepted", () => {
+  const parsed = parseImagenArgs("--out-dir=/tmp/shots a red fox");
+  assert.equal(parsed.prompt, "a red fox");
+  assert.equal(parsed.outDir, "/tmp/shots");
+});
+
+test("--out-dir values keep quoted paths with spaces intact", () => {
+  const doubled = parseImagenArgs('a red fox --out-dir "my shots 2026"');
+  assert.equal(doubled.outDir, "my shots 2026");
+  assert.equal(doubled.prompt, "a red fox");
+  const single = parseImagenArgs("a red fox --out-dir '/tmp/my shots'");
+  assert.equal(single.outDir, "/tmp/my shots");
+});
+
+test("--out-dir is removed from anywhere without disturbing the prompt", () => {
+  const parsed = parseImagenArgs("a red --out-dir /tmp/shots fox in snow");
+  assert.equal(parsed.prompt, "a red fox in snow");
+  assert.equal(parsed.outDir, "/tmp/shots");
+});
+
+test("--out-dir without a value throws a usage error naming the flag", () => {
+  assert.throws(() => parseImagenArgs("a red fox --out-dir"), /--out-dir requires a value/);
+});
+
+test("--out-dir= with an empty value throws a usage error", () => {
+  assert.throws(() => parseImagenArgs("a red fox --out-dir="), /--out-dir requires a value/);
+});
+
+test("--out-dir followed by another flag counts as a missing value", () => {
+  assert.throws(
+    () => parseImagenArgs("a red fox --out-dir --model nano-banana-2"),
+    /--out-dir requires a value/,
+  );
+});
+
+test("--out-dir combines with --model in one invocation", () => {
+  const parsed = parseImagenArgs("a red fox --model nano-banana-2 --out-dir /tmp/shots");
+  assert.equal(parsed.prompt, "a red fox");
+  assert.equal(parsed.modelId, "nano-banana-2");
+  assert.equal(parsed.outDir, "/tmp/shots");
+});
+
+test("no --out-dir leaves outDir undefined", () => {
+  const parsed = parseImagenArgs("a red fox --model nano-banana-2");
+  assert.equal(parsed.outDir, undefined);
+});

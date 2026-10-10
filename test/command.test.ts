@@ -12,10 +12,14 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { runImagenCommand, type ImagenCommandOptions } from "../src/command.ts";
+import { runImagenCommand, type GenerationPayload, type ImagenCommandOptions } from "../src/command.ts";
 import type { DoctorFinding } from "../src/doctor.ts";
+import type { SaveGenerationInput } from "../src/output.ts";
 
 interface Recorded {
   customCalls: number;
@@ -42,11 +46,18 @@ function fakeModel() {
   };
 }
 
+/** Extras for the happy path: a returned image block and/or a wizard outcome. */
+interface CtxExtras {
+  image?: { mimeType: string; data: string };
+  customResult?: unknown;
+}
+
 function fakeCtx(
   rec: Recorded,
   mode: "tui" | "json" = "json",
   stopReason: "error" | "aborted" = "error",
   availableModels?: () => unknown[],
+  extras?: CtxExtras,
 ) {
   const model = fakeModel();
   const ctx = {
@@ -61,7 +72,7 @@ function fakeCtx(
       },
       custom: async () => {
         rec.customCalls++;
-        return { action: "cancel" as const };
+        return extras?.customResult ?? ({ action: "cancel" as const });
       },
     },
     modelRegistry: {
@@ -70,6 +81,16 @@ function fakeCtx(
       generateImages: async (m: { id: string }, context: unknown, options?: { signal?: AbortSignal }) => {
         rec.generateCalls++;
         rec.generated.push({ modelId: m.id, context, hasSignal: Boolean(options?.signal) });
+        if (extras?.image) {
+          return {
+            api: "openai-images",
+            provider: "opendesign",
+            model: m.id,
+            output: [{ type: "image", mimeType: extras.image.mimeType, data: extras.image.data }],
+            stopReason: "stop" as const,
+            timestamp: Date.now(),
+          };
+        }
         return {
           api: "openai-images",
           provider: "opendesign",
@@ -251,3 +272,97 @@ test("a doctor that throws is reported as an error, never propagated", async () 
   assert.match(notify, /doctor exploded/);
   assert.equal(rec.notes.some((n) => n.type === "error"), true);
 });
+
+// ---------------------------------------------------------------------------
+// --out-dir wiring: the flag must reach the output layer on both forms
+// ---------------------------------------------------------------------------
+
+const PNG_BASE64 = Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString("base64");
+
+function captureSaver(sink: SaveGenerationInput[]) {
+  return async (input: SaveGenerationInput) => {
+    sink.push(input);
+    return { dir: input.outDir ?? input.root, imagePath: "/stub/image.png", metaPath: "/stub/meta.json" };
+  };
+}
+
+test("--out-dir reaches the output layer on the direct form", async () => {
+  const rec = recorder();
+  const saved: SaveGenerationInput[] = [];
+  const tmpRoot = await mkdtemp(join(tmpdir(), "imagen-cmd-"));
+  try {
+    await runImagenCommand(
+      "a red fox --model nano-banana-2 --out-dir /home/u/shots",
+      fakeCtx(rec, "json", "error", undefined, { image: { mimeType: "image/png", data: PNG_BASE64 } }),
+      { statePath: null, doctor: doctorPasses, outputRoot: tmpRoot, save: captureSaver(saved) },
+    );
+    assert.equal(saved.length, 1, "exactly one save must happen");
+    assert.equal(saved[0].outDir, "/home/u/shots", "the parsed outDir must reach the save step");
+    assert.equal(saved[0].prompt, "a red fox", "the prompt must survive flag removal");
+  } finally {
+    await rm(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test("without --out-dir the save step keeps the default output root", async () => {
+  const rec = recorder();
+  const saved: SaveGenerationInput[] = [];
+  const tmpRoot = await mkdtemp(join(tmpdir(), "imagen-cmd-"));
+  const outputRoot = join(tmpRoot, "imagenes");
+  try {
+    await runImagenCommand(
+      "a red fox --model nano-banana-2",
+      fakeCtx(rec, "json", "error", undefined, { image: { mimeType: "image/png", data: PNG_BASE64 } }),
+      { statePath: null, doctor: doctorPasses, outputRoot, save: captureSaver(saved) },
+    );
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0].outDir, undefined, "no outDir means the legacy layout");
+    assert.equal(saved[0].root, outputRoot, "the default root is untouched");
+  } finally {
+    await rm(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+// The wizard form runs through src/overlay.ts, which value-imports
+// @earendil-works/pi-tui. Without that peer dependency installed the module
+// cannot load, so the wizard path cannot run in this environment; the test is
+// skipped with that exact reason and executes where the dependency exists.
+const overlayAvailable = await import("../src/overlay.ts").then(() => true, () => false);
+
+test(
+  "--out-dir reaches the output layer for wizard-initiated generations",
+  {
+    skip: overlayAvailable
+      ? false
+      : "src/overlay.ts cannot load without the @earendil-works/pi-tui peer dependency",
+  },
+  async () => {
+    const rec = recorder();
+    const saved: SaveGenerationInput[] = [];
+    const tmpRoot = await mkdtemp(join(tmpdir(), "imagen-wizard-"));
+    try {
+      const payload: GenerationPayload = {
+        modelId: "nano-banana-2",
+        provider: "opendesign",
+        prompt: "a fox from the wizard",
+        mimeType: "image/png",
+        bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+        sizeSent: "1024x1024",
+        latencyMs: 1200,
+      };
+      const ctx = fakeCtx(rec, "tui", "error", undefined, {
+        customResult: { action: "generate", modelId: "nano-banana-2", prompt: payload.prompt, value: payload },
+      });
+      await runImagenCommand("--out-dir /home/u/shots", ctx, {
+        statePath: null,
+        doctor: doctorPasses,
+        outputRoot: tmpRoot,
+        save: captureSaver(saved),
+      });
+      assert.equal(saved.length, 1, "the wizard generation must reach the save step");
+      assert.equal(saved[0].outDir, "/home/u/shots", "--out-dir must apply to wizard runs too");
+    } finally {
+      await rm(tmpRoot, { recursive: true, force: true });
+    }
+  },
+);

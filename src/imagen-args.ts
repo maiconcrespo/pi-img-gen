@@ -9,6 +9,7 @@
  * Forms:
  *   /imagen a red fox                      → prompt only (overlay wizard not needed)
  *   /imagen a red fox --model nano-banana-2 → direct generation, works headless
+ *   /imagen a red fox --out-dir ~/shots     → direct generation saved into ~/shots
  *   /imagen --model nano-banana-2           → opens the overlay with that model preselected
  */
 
@@ -17,10 +18,14 @@ export interface ImagenInvocation {
   prompt: string;
   /** `--model` value, present only when the flag was given. */
   modelId?: string;
+  /** `--out-dir` value, present only when the flag was given. */
+  outDir?: string;
 }
 
 const MODEL_FLAG = "--model";
 const MODEL_FLAG_PREFIX = `${MODEL_FLAG}=`;
+const OUT_DIR_FLAG = "--out-dir";
+const OUT_DIR_FLAG_PREFIX = `${OUT_DIR_FLAG}=`;
 
 /** Usage error raised for malformed flags; the command reports it as a notification. */
 export function usageError(message: string): Error {
@@ -61,11 +66,12 @@ export function tokenize(raw: string): string[] {
   return tokens;
 }
 
-/** Parse the raw `/imagen` argument string into prompt + optional model id. */
+/** Parse the raw `/imagen` argument string into prompt + optional flag values. */
 export function parseImagenArgs(raw: string): ImagenInvocation {
   const tokens = tokenize(raw ?? "");
   const promptParts: string[] = [];
   let modelId: string | undefined;
+  let outDir: string | undefined;
 
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i]!;
@@ -89,9 +95,31 @@ export function parseImagenArgs(raw: string): ImagenInvocation {
       continue;
     }
 
+    if (token === OUT_DIR_FLAG) {
+      const value = tokens[i + 1];
+      if (value === undefined || value.length === 0 || value.startsWith("--")) {
+        throw usageError(`${OUT_DIR_FLAG} requires a value: /imagen <prompt> --out-dir <directory>`);
+      }
+      outDir = value;
+      i += 1;
+      continue;
+    }
+
+    if (token.startsWith(OUT_DIR_FLAG_PREFIX)) {
+      const value = token.slice(OUT_DIR_FLAG_PREFIX.length);
+      if (value.length === 0) {
+        throw usageError(`${OUT_DIR_FLAG} requires a value: /imagen <prompt> --out-dir <directory>`);
+      }
+      outDir = value;
+      continue;
+    }
+
     promptParts.push(token);
   }
 
   const prompt = promptParts.join(" ").trim();
-  return modelId === undefined ? { prompt } : { prompt, modelId };
+  const invocation: ImagenInvocation = { prompt };
+  if (modelId !== undefined) invocation.modelId = modelId;
+  if (outDir !== undefined) invocation.outDir = outDir;
+  return invocation;
 }

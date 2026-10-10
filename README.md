@@ -66,11 +66,23 @@ gentle-shell remove git:github.com/maiconcrespo/pi-img-gen
 /imagen                                                # opens the overlay wizard (TUI only)
 ```
 
-**Direct form** — `/imagen <prompt text> [--model <id>]` generates immediately without
-opening any UI, so it works in every mode including headless RPC/JSON runs, where
-custom terminal components do not exist. `--model` may appear before or after the
-prompt, `--model=<id>` is accepted, quotes group words, and an unknown or valueless
-`--model` is reported as a usage error before any request goes out.
+**Direct form** — `/imagen <prompt text> [--model <id>] [--out-dir <path>]` generates
+immediately without opening any UI, so it works in every mode including headless
+RPC/JSON runs, where custom terminal components do not exist. `--model` may appear
+before or after the prompt, `--model=<id>` is accepted, quotes group words, and an
+unknown or valueless `--model` is reported as a usage error before any request goes
+out.
+
+**Output directory** — `--out-dir <path>` / `--out-dir=<path>` chooses the directory
+where the generated image and its `meta.json` are saved, on **both** forms — including
+generations started from the overlay wizard. Missing directories are created
+recursively. Without the flag, images go to the default layout under `~/imagenes`
+(see [Output layout](#output-layout)). A valueless `--out-dir` is reported as a usage
+error before any request goes out.
+
+```text
+/imagen a red fox in the snow --out-dir ~/shots/foxes   # saves into ~/shots/foxes
+```
 
 **Overlay form** — a bare `/imagen` opens a floating wizard (TUI only):
 
@@ -136,6 +148,13 @@ Every successful generation writes:
     "stopReason": "stop"
   }
   ```
+
+**With `--out-dir <path>`** the stamp-slug directory is skipped entirely: the image
+and its `meta.json` are written directly into that directory (created recursively
+when missing). Nothing is ever overwritten there either — when a file of the same
+name already exists, a numeric suffix is appended (`nano-banana-2-2.png`,
+`meta-2.json`). If the path exists but is not a directory, or is not writable, the
+failure is reported as an error notification naming the path.
 
 ### Reference images: out of scope (v1)
 
