@@ -86,3 +86,45 @@ export function getProfile(providerId: string): ImageProviderProfile | undefined
 export function resolveDefaultSize(profile: ImageProviderProfile, modelId: string): string {
   return profile.modelSizes[modelId] ?? profile.defaultSize;
 }
+
+/** Discriminated result of {@link validateSize}. */
+export type SizeValidation = { ok: true; size: string } | { ok: false; reason: string };
+
+/** `WIDTHxHEIGHT` with positive decimal integers, e.g. `1024x1024`. */
+const SIZE_PATTERN = /^([1-9]\d*)x([1-9]\d*)$/;
+
+/**
+ * Pre-flight size validation: pure, provider-neutral, and never throws.
+ *
+ * - Rejects malformed sizes (must match `WIDTHxHEIGHT` with positive integers).
+ * - Enforces the profile's verified `minPixels` floor for the model; the reason
+ *   is actionable (model id, requested size, required pixels, verified size).
+ * - No profile, or a model without constraints → the size passes through
+ *   unchanged. Adding a provider stays "one profile row": this core carries no
+ *   provider-specific strings.
+ */
+export function validateSize(
+  modelId: string,
+  profile: ImageProviderProfile | undefined,
+  size: string,
+): SizeValidation {
+  const match = SIZE_PATTERN.exec(size);
+  if (!match) {
+    return {
+      ok: false,
+      reason: `invalid size "${size}": expected WIDTHxHEIGHT with positive decimal integers, e.g. 1024x1024`,
+    };
+  }
+  const pixels = Number(match[1]) * Number(match[2]);
+  const minPixels = profile?.minPixels?.[modelId];
+  if (minPixels !== undefined && pixels < minPixels) {
+    const verified = profile?.modelSizes[modelId];
+    return {
+      ok: false,
+      reason:
+        `size ${size} (${pixels} px) is below the minimum of ${minPixels} px required for ${modelId}` +
+        (verified ? `; verified working size: ${verified}` : ""),
+    };
+  }
+  return { ok: true, size };
+}

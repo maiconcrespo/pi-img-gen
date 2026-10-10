@@ -226,6 +226,56 @@ Adding a provider is **one profile row + verification tests — never a refactor
 
 The transport in `src/generate.ts` needs no changes.
 
+## Known limitations
+
+1. **Provider protocol.** The transport speaks exactly one protocol: an
+   OpenAI-compatible `POST {baseUrl}/images/generations` endpoint. Providers with
+   custom or private image protocols are not supported out of the box — they need
+   a profile row in `src/profiles.ts` (for endpoint/size quirks on a compatible
+   API) or a config adjustment / separate transport for genuinely different
+   wire formats.
+2. **Inline image display in the TUI.** Rendering the generated image inside the
+   terminal depends on terminal graphics protocols (Kitty graphics / iTerm2
+   inline / SIXEL). In a terminal without them, open the generated file
+   externally from `~/imagenes/…` instead.
+3. **Prompt/parameter quality depends on the host LLM.** This package does not
+   improve prompts or pick parameters for you. Per-profile parameter validation
+   now rejects unsupported sizes locally before the HTTP call (e.g. a
+   `seedream-5.0` request below its 1920x1920 floor) with an actionable
+   `errorMessage`, instead of surfacing a provider HTTP 400.
+4. **Synchronous request/response.** Generation is a blocking request with no
+   live progress preview of the image being produced; the overlay only shows
+   elapsed time while the request runs.
+
+## Tested environments
+
+The verified environment is the maintainer's **Linux** workstation (Linux +
+Homebrew/linuxbrew tooling). Other setups — macOS, Windows/WSL, other package
+managers — are **untested**.
+
+Regardless of OS, inline image rendering in the TUI depends on terminal
+graphics support (Kitty graphics / iTerm2 inline / SIXEL); see
+[Known limitations](#known-limitations). The same code on another OS may run
+fine yet still show no inline preview in a terminal without those protocols.
+
+## Portability
+
+- **No machine-specific values** ship in the package: paths resolve through pi's
+  agent directory (`getAgentDir()`, overridable with `PI_CODING_AGENT_DIR`) and
+  the documented output layout; nothing is hardcoded to a specific host.
+- **API key resolution chain:** `models.json` `apiKey` → provider auth →
+  environment. The resolved key is sent as `Authorization: Bearer <key>`; it is
+  never stored by this package.
+- **`settings.json` dependency:** the
+  `"extensions": ["-builtin:codemode"]` line (see the warning under
+  [Install](#install)) is a portability constraint — when moving to another
+  machine, the target's `settings.json` (e.g.
+  `~/.gentle-shell/agent/settings.json`) must reproduce that exact
+  configuration or the `/imagen` workflow breaks.
+- **Secret hygiene:** never hardcode API keys in code, configs, or docs. Use
+  `.env` (kept out of version control via `.gitignore`) or the environment, and
+  run secret scanning (e.g. gitleaks) before publishing.
+
 ## Development
 
 ```bash
